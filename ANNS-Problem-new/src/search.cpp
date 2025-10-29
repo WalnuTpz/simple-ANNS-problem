@@ -16,7 +16,7 @@ vector<int> search(const point_t<float>& query, const vertex_t* graph, const poi
     priority_queue<pfi, vector<pfi>, greater<pfi>> candidates;
     vector<int> vis(n, 0);
     vector<int> ans;
-    const static int m = min(500, n);
+    const static int m = min(15 * (int)pow(n, 1.0 / 3), n);
 
     for (int i = 0; i < m; i++) {
         int entry = rand() % n;
@@ -31,8 +31,8 @@ vector<int> search(const point_t<float>& query, const vertex_t* graph, const poi
         if (can < 0 || can >= n) continue;
         if (results.size() >= k && can_dis > results.top().first)
             break;
-        for (int j = 0; j < K; j++) {
-            int nei = graph[can].neighbors[j];
+
+        for (auto nei : graph[can].neighbors) {
             if (nei < 0 || nei >= n || vis[nei])
                 continue;
             vis[nei] = 1;
