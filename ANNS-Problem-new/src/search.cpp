@@ -14,13 +14,13 @@ struct vertex_t {
 vector<int> search(const point_t<float>& query, const vertex_t* graph, const point_t<float>* points, int n, int k) {
     priority_queue<pfi> results;
     priority_queue<pfi, vector<pfi>, greater<pfi>> candidates;
-    set<int> vis;
+    vector<int> vis(n, 0);
     vector<int> ans;
-    const static int m = min(100, n);
+    const static int m = min(500, n);
 
     for (int i = 0; i < m; i++) {
         int entry = rand() % n;
-        vis.insert(entry);
+        vis[entry] = 1;
         float dist = dis(query, points[entry]);
         candidates.push({dist, entry});
         results.push({dist, entry});
@@ -33,9 +33,10 @@ vector<int> search(const point_t<float>& query, const vertex_t* graph, const poi
             break;
         for (int j = 0; j < K; j++) {
             int nei = graph[can].neighbors[j];
-            if (vis.count(nei))
+            if (nei < 0 || nei >= n || vis[nei])
                 continue;
-            vis.insert(nei);
+            vis[nei] = 1;
+
             float nei_dis = dis(query, points[nei]);
             candidates.push({nei_dis, nei});
             if (results.size() < k)
