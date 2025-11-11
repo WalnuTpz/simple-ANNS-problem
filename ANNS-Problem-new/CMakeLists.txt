@@ -7,18 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
-find_package(OpenMP REQUIRED)
-
-if(OpenMP_FOUND)
-    message(STATUS "Found OpenMP, enabling...")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-endif()
+add_compile_options(-fopenmp)
+add_link_options(-fopenmp)
 
 add_executable(search src/search.cpp)
-
 add_executable(build_knn src/build_knn.cpp)
-
-if(OpenMP_FOUND)
-    target_link_libraries(search PRIVATE OpenMP::OpenMP_CXX)
-    target_link_libraries(build_knn PRIVATE OpenMP::OpenMP_CXX)
-endif()

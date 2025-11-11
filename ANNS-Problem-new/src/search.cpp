@@ -1,56 +1,56 @@
 #include "defs.h"
 #include "utils.h"
 #include <bits/stdc++.h>
-
+#include <omp.h>
 using namespace std;
 
-#define K 10
 using pfi = pair<float, int>;
 
-struct vertex_t {
-    int neighbors[K];
-};
-
-vector<int> search(const point_t<float>& query, const vertex_t* graph, const point_t<float>* points, int n, int k) {
-    priority_queue<pfi> results;
-    priority_queue<pfi, vector<pfi>, greater<pfi>> candidates;
-    vector<int> vis(n, 0);
-    vector<int> ans;
-    const static int m = min(15 * (int)pow(n, 1.0 / 3), n);
-
-    for (int i = 0; i < m; i++) {
-        int entry = rand() % n;
-        vis[entry] = 1;
-        float dist = dis(query, points[entry]);
-        candidates.push({dist, entry});
-        results.push({dist, entry});
-    }
-    while (!candidates.empty()) {
-        auto [can_dis, can] = candidates.top();
-        candidates.pop();
-        if (can < 0 || can >= n) continue;
-        if (results.size() >= k && can_dis > results.top().first)
-            break;
-
-        for (auto nei : graph[can].neighbors) {
-            if (nei < 0 || nei >= n || vis[nei])
-                continue;
-            vis[nei] = 1;
-
-            float nei_dis = dis(query, points[nei]);
-            candidates.push({nei_dis, nei});
-            if (results.size() < k)
-                results.push({nei_dis, nei});
-            else if (nei_dis < results.top().first) {
-                results.pop();
-                results.push({nei_dis, nei});
+int get_nearest(const point_t<float> &q, int entry, const vector<vector<int>> &layer, point_t<float> *pts) {
+    int cur = entry;
+    float curDist = dis(pts[cur], q);
+    bool flag = true;
+    while (flag) {
+        flag = false;
+        for (int v : layer[cur]) {
+            float d = dis(pts[v], q);
+            if (d < curDist) {
+                curDist = d;
+                cur = v;
+                flag = true;
             }
         }
     }
+    return cur;
+}
 
-    while (results.size() > k)
-        results.pop();
+vector<int> search(const point_t<float> &q, int entry, const vector<vector<int>> &layer, point_t<float> *pts, int ef_search) {
+    priority_queue<pfi, vector<pfi>, greater<pfi>> candidates;
+    priority_queue<pfi> results;
+    vector<int> vis(layer.size(), 0);
+    vector<int> ans;
 
+    float entry_dis = dis(pts[entry], q);
+    candidates.push({entry_dis, entry});
+    results.push({entry_dis, entry});
+    vis[entry] = 1;
+
+    while (!candidates.empty()) {
+        auto [u_dis, u] = candidates.top();
+        candidates.pop();
+        if (results.size() >= ef_search && u_dis > results.top().first)
+            break;
+        for (int v : layer[u]) {
+            if (!vis[v]) {
+                vis[v] = 1;
+                float d = dis(pts[v], q);
+                candidates.push({d, v});
+                results.push({d, v});
+                if ((int)results.size() > ef_search)
+                    results.pop();
+            }
+        }
+    }
     while (!results.empty()) {
         ans.push_back(results.top().second);
         results.pop();
@@ -72,11 +72,6 @@ int main(int argc, char** argv) {
     assert(n > 0);
     point_t<float>* points = reinterpret_cast<point_t<float>*>(foo);
 
-    int* bar = nullptr;
-    int graph_n = read_vecs(graph_file, bar, K);
-    assert(graph_n == n);
-    vertex_t* graph = reinterpret_cast<vertex_t*>(bar);
-
     int q = read_vecs(query_file, foo, DIM);
     assert(q > 0);
     point_t<float>* queries = reinterpret_cast<point_t<float>*>(foo);
@@ -85,31 +80,58 @@ int main(int argc, char** argv) {
     int truth_q = read_vecs(truth_file, truths, k);
     assert(truth_q == q);
 
-    double tot_time = 0.0;
-    long long tot_correct = 0;
+    int entry, entry_level, M;
+    ifstream fin(graph_file + ".meta");
+    fin >> entry >> entry_level >> M;
 
-    #pragma omp parallel for reduction(+:tot_time) reduction(+:tot_correct)
-    for (int i = 0; i < q; ++i) {
-        auto start = chrono::high_resolution_clock::now();
-        auto result = search(queries[i], graph, points, n, k);
-        auto end = chrono::high_resolution_clock::now();
-        tot_time += chrono::duration<double, micro>(end - start).count();
-
-        for (int j = 0; j < k; ++j) {
-            for (int l = 0; l < result.size(); ++l) {
-                if (truths[i * k + j] == result[l]) {
-                    tot_correct++;
-                    break;
-                }
+    int* lvl = nullptr;
+    int rows_levels = read_vecs<int>(graph_file + ".levels", lvl, 1);
+    assert(rows_levels == n);
+    vector<int> level_of(lvl, lvl + n);
+    vector<vector<vector<int>>> layers(entry_level + 1, vector<vector<int>>(n));
+    for (int l = 0; l <= entry_level; ++l) {
+        int* buf = nullptr;
+        int rows = read_vecs<int>(graph_file + ".L" + to_string(l), buf, M);
+        assert(rows == n);
+        for (int i = 0; i < n; ++i) {
+            layers[l][i].clear();
+            for (int j = 0; j < M; ++j) {
+                int v = buf[i * M + j];
+                if (v >= 0) layers[l][i].push_back(v);
             }
         }
+        delete[] buf;
     }
-    printf("QPS: %.3f\n", q * 1e6 / tot_time);
-    printf("Recall@%d: %.3f%%\n", k, 100.0 * tot_correct / (q * k));
+    int ef_search = max(100, k);
+    double tot_time = 0;
+    int correct = 0;
 
-    delete[] graph;
+    auto t0 = chrono::high_resolution_clock::now();
+    #pragma omp parallel for schedule(dynamic) reduction(+:tot_time, correct)
+    for (int qi = 0; qi < q; qi++) {
+        auto &qq = queries[qi];
+        int cur = entry;
+
+        for (int l = entry_level; l > 0; l--)
+            cur = get_nearest(qq, cur, layers[l], points);
+
+        vector<int> ans = search(qq, cur, layers[0], points, ef_search);
+        nth_element(ans.begin(), ans.begin() + k, ans.end(),
+            [&](int a, int b){ return dis(points[a], qq) < dis(points[b], qq); });
+        ans.resize(k);
+        for (int x : ans)
+            for (int t = 0; t < k; t++)
+                if (x == truths[qi*k+t]) correct++;
+
+    }
+    auto t1 = chrono::high_resolution_clock::now();
+    tot_time = chrono::duration<double>(t1 - t0).count();
+    cout << "QPS: " << q / tot_time << "\n";
+    cout << "Recall@" << k << ": " << (correct * 100.0 / (q * k)) << "%\n";
+
     delete[] points;
     delete[] truths;
     delete[] queries;
+    delete[] lvl;
     return 0;
 }
