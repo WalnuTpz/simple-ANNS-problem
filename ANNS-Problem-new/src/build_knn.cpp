@@ -28,17 +28,18 @@ HNSW_params choose_params(int n) {
     else p.M = 32;
 
     if (n <= 20000) p.ef_construction = 200;
-    else if (n <= 200000) p.ef_construction = 500;
-    else p.ef_construction = 800;
+    else if (n <= 200000) p.ef_construction = 300;
+    else p.ef_construction = 400;
 
     p.max_level = max(1, (int) log2(n));
-    p.ml = 1.0f / log(1.0f * p.M);
+    p.ml = 0.0315f * log(n) + 0.144f;
 
     return p;
 }
 
 void select_neighbors(vector<pfi> &candidates, int M, point_t<float> *pts) {
     vector<pfi> results;
+
     sort(candidates.begin(), candidates.end());
     for (auto &[u_dis, u]: candidates) {
         bool flag = true;
@@ -134,35 +135,32 @@ HNSW_graph build(point_t<float> *pts, int n, int M, int ef_construction, int max
             entry_level = level;
             continue;
         }
-
         int cur = entry;
         for (int l = entry_level; l > level; l--) {
             cur = get_nearest(pts[u], cur, layers[l], pts);
         }
-
         for (int l = level; l >= 0; l--) {
             vector<int> neighbors;
-            if (l == 0){
-                neighbors = search(pts[u], cur, layers[0], pts, ef_construction);
-            }
-            else
-                neighbors = search(pts[u], cur, layers[l], pts, max(ef_construction / 2, M * 4));
-
             vector<pfi> candidates;
+
+            if (l == 0) {
+                neighbors = search(pts[u], cur, layers[0], pts, ef_construction);
+            } else
+                neighbors = search(pts[u], cur, layers[l], pts, max(ef_construction / 2, M * 4));
             candidates.reserve(neighbors.size());
             for (int v: neighbors) candidates.emplace_back(dis(pts[u], pts[v]), v);
             select_neighbors(candidates, M, pts);
+            cur = candidates[0].second;
 
-            #pragma omp parallel for schedule(static)
-            for (int idx = 0; idx < (int)candidates.size(); idx++) {
+#pragma omp parallel for schedule(static)
+            for (int idx = 0; idx < (int) candidates.size(); idx++) {
                 auto &[v_dis, v] = candidates[idx];
-
                 omp_set_lock(&lock[u]);
                 layers[l][u].push_back(v);
                 omp_unset_lock(&lock[u]);
-
                 omp_set_lock(&lock[v]);
                 layers[l][v].push_back(u);
+
                 if ((int) layers[l][v].size() > M) {
                     vector<pfi> tmp;
                     tmp.reserve(layers[l][v].size());
@@ -184,17 +182,13 @@ HNSW_graph build(point_t<float> *pts, int n, int M, int ef_construction, int max
                 for (auto &q: tmp) layers[l][u].push_back(q.second);
             }
             omp_unset_lock(&lock[u]);
-
         }
-
         if (level > entry_level) {
             entry = u;
             entry_level = level;
         }
     }
-
     for (int i = 0; i < n; ++i) omp_destroy_lock(&lock[i]);
-
     HNSW_graph G{move(layers), move(level_of), entry, entry_level};
     return G;
 }
@@ -226,9 +220,7 @@ int main(int argc, char **argv) {
 
     ofstream fout(output_file + ".meta");
     fout << G.entry << " " << G.entry_level << " " << M << "\n";
-
     write_vecs<int>(output_file + ".levels", G.level_of.data(), n, 1);
-
     for (int l = 0; l <= G.entry_level; ++l) {
         vector<int> flat(n * M, -1);
         for (int u = 0; u < n; ++u) {
