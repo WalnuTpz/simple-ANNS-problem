@@ -1,4 +1,4 @@
-# simple-ANNS-problem
+# Simple-ANNS-Problem
 
 C++ 实现的课程作业 **Simple ANNS Problem**：
 
